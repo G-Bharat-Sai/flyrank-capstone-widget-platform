@@ -1,5 +1,4 @@
 package com.flyrank.capstone.service;
-
 import tools.jackson.databind.ObjectMapper;
 import com.flyrank.capstone.dto.SubmissionRequest;
 import com.flyrank.capstone.dto.SubmissionResponse;
@@ -21,6 +20,7 @@ public class SubmissionService {
     private final SubmissionRepository submissionRepository;
     private final ObjectMapper objectMapper;
     private final GeoEnrichmentService geoEnrichmentService;
+    private final WebhookService webhookService;
     public Optional<SubmissionResponse> submit(SubmissionRequest request, String ipAddress) {
         Widget widget = widgetRepository.findById(request.widgetId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Widget not found"));
@@ -40,6 +40,7 @@ public class SubmissionService {
         });
         Submission submission = builder.build();
         submissionRepository.save(submission);
+        webhookService.notify(widget, submission, request.fields());
         return Optional.of(new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt()));
     }
     @SuppressWarnings("unchecked")
