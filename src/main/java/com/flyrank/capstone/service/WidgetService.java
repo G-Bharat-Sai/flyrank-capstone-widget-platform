@@ -2,6 +2,7 @@ package com.flyrank.capstone.service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import com.flyrank.capstone.dto.CreateWidgetRequest;
+import com.flyrank.capstone.dto.WidgetConfigResponse;
 import com.flyrank.capstone.dto.WidgetFieldDto;
 import com.flyrank.capstone.dto.WidgetResponse;
 import com.flyrank.capstone.entity.Owner;
@@ -59,6 +60,22 @@ public class WidgetService {
     public WidgetResponse getOne(UUID id) {
         Widget widget = findOwnedWidget(id);
         return toResponse(widget);
+    }
+    public Widget getPublicWidget(UUID id) {
+        return widgetRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Widget not found"));
+    }
+    public WidgetConfigResponse toConfigResponse(Widget widget) {
+        return new WidgetConfigResponse(
+                widget.getId(),
+                widget.getType(),
+                widget.getTitle(),
+                widget.getDescription(),
+                readFields(widget.getFields()),
+                widget.getButtonText(),
+                readDisplayOptions(widget.getDisplayOptions()),
+                widget.getVersion()
+        );
     }
     public WidgetResponse update(UUID id, CreateWidgetRequest request) {
         validateType(request.type());
