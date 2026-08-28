@@ -1,6 +1,7 @@
 package com.flyrank.capstone.config;
 
 import com.flyrank.capstone.security.JwtAuthenticationFilter;
+import com.flyrank.capstone.security.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -72,6 +73,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .authenticationProvider(authenticationProvider())
+            .addFilterBefore(new RateLimitFilter(), UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
