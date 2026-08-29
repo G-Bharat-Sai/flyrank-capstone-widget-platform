@@ -7,6 +7,7 @@ import com.flyrank.capstone.entity.Widget;
 import com.flyrank.capstone.repository.SubmissionRepository;
 import com.flyrank.capstone.repository.WidgetRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -24,9 +25,17 @@ public class SubmissionService {
     private final ObjectMapper objectMapper;
     private final GeoEnrichmentService geoEnrichmentService;
     private final WebhookService webhookService;
-    public Optional<SubmissionResponse> submit(SubmissionRequest request, String ipAddress) {
+    public Optional<SubmissionResponse> submit(SubmissionRequest request, String ipAddress, String idempotencyKey) {
         Widget widget = widgetRepository.findById(request.widgetId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Widget not found"));
+        boolean hasIdempotencyKey = idempotencyKey != null && !idempotencyKey.isBlank();
+        if (hasIdempotencyKey) {
+            Optional<Submission> existing = submissionRepository.findByWidgetIdAndIdempotencyKey(widget.getId(), idempotencyKey);
+            if (existing.isPresent()) {
+                Submission s = existing.get();
+                return Optional.of(new SubmissionResponse(s.getId(), s.getWidgetId(), s.getCreatedAt()));
+            }
+        }
         if (request.honeypot() != null && !request.honeypot().isBlank()) {
             return Optional.empty();
         }
@@ -39,14 +48,24 @@ public class SubmissionService {
                 .widgetId(widget.getId())
                 .ownerId(widget.getOwnerId())
                 .payload(payloadJson)
-                .ipAddress(ipAddress);
+                .ipAddress(ipAddress)
+                .idempotencyKey(hasIdempotencyKey ? idempotencyKey : null);
         geoEnrichmentService.lookup(ipAddress).ifPresent(geo -> {
             builder.geoCountry(geo.country());
             builder.geoCity(geo.city());
             builder.geoProviderUsed(geo.provider());
         });
         Submission submission = builder.build();
-        submissionRepository.save(submission);
+        try {
+            submissionRepository.save(submission);
+        } catch (DataIntegrityViolationException e) {
+            if (!hasIdempotencyKey) {
+                throw e;
+            }
+            Submission winner = submissionRepository.findByWidgetIdAndIdempotencyKey(widget.getId(), idempotencyKey)
+                    .orElseThrow(() -> e);
+            return Optional.of(new SubmissionResponse(winner.getId(), winner.getWidgetId(), winner.getCreatedAt()));
+        }
         webhookService.notify(widget, submission, request.fields());
         return Optional.of(new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt()));
     }

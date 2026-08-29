@@ -1,0 +1,2 @@
+ALTER TABLE submissions ADD COLUMN idempotency_key VARCHAR(255);
+CREATE UNIQUE INDEX idx_submissions_widget_idempotency_key ON submissions (widget_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
