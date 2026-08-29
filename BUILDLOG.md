@@ -1,0 +1,16 @@
+# BUILDLOG.md
+
+Where AI helped, where it was wrong, and what changed as a result. This project was built with an AI assistant acting purely as a step-by-step guide: it proposed code and exact commands, a human ran every command and pasted back the real output, and the AI diagnosed failures from that real output. The AI never executed code directly against this project.
+
+## Where AI helped
+Drafting the idempotency-key mechanism and the async background-job conversion of webhook delivery (retries with backoff, failure alert).
+- Systematically testing each requirement against the brief's actual wording (re-reading the brief PDF directly rather than working from memory) and identifying gaps that had not actually been proven yet, such as PROBE 4 needing a *specific* provider-A-down test rather than a coincidental both-down case, and the versioned-bundle wording needing a URL that genuinely changes rather than only ETag revalidation.
+
+## Where AI was wrong, and what changed
+**Silent 500s on malformed input, found late.** While assembling `EVIDENCE.md` and deliberately testing every "malformed payload" scenario in the brief's Requirements checklist, discovered that sending syntactically broken JSON, or an invalid UUID in a path parameter, both returned a raw `500 Internal Server Error` instead of a clean `4xx`. The cause: `GlobalExceptionHandler` had specific handlers for validation and not-found errors, but no handler for `HttpMessageNotReadableException` or `MethodArgumentTypeMismatchException`, so both fell through to the generic `Exception -> 500` catch-all. This directly violated PROBE 2 ("clean 4xx JSON errors, never a 500") and would have been claimed as done in `EVIDENCE.md` without this deliberate test catching it. Fixed by adding specific handlers for both exception types, each returning a proper `400` with a real error message. This is the clearest example in this project of AI-assisted testing catching an AI-assisted implementation's own gap -- the fix came from actually running the exact scenario the brief describes, not from re-reading the code.
+
+**Judgment call flagged rather than silently assumed.** The brief's "versioned bundle" requirement is phrased as "new version = new URL or cache-bust." The first implementation used a fixed URL with ETag-based cache revalidation, which is a real HTTP caching mechanism but arguably not what "new URL" literally describes. Rather than silently claim the checkbox as satisfied, this was raised explicitly for a decision, and the fix -- an actual `widget.v{version}.js` route, kept alongside the original URL for backward compatibility -- was built and tested (`v1` -> 200, `v2` -> 404 until published, unversioned alias still works) before the checkbox was marked done.
+
+## What this means for review
+
+Every one of the corrections above is traceable to a real failed build, a real error response, or a deliberate test that exposed a gap -- none were caught by inspection alone. `EVIDENCE.md` reflects the system's *current, tested* state, not an aspirational one.
