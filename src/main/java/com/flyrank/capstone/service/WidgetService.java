@@ -9,6 +9,7 @@ import com.flyrank.capstone.entity.Owner;
 import com.flyrank.capstone.entity.Widget;
 import com.flyrank.capstone.repository.OwnerRepository;
 import com.flyrank.capstone.repository.WidgetRepository;
+import com.flyrank.capstone.util.WidgetJsConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -130,8 +131,8 @@ public class WidgetService {
     }
     private WidgetResponse toResponse(Widget widget) {
         String embedSnippet = String.format(
-                "<script src=\"%s/widgets/%s/widget.js\" data-widget-id=\"%s\"></script>",
-                baseUrl, widget.getId(), widget.getId()
+                "<script src=\"%s/widgets/%s/widget.v%s.js\" data-widget-id=\"%s\"></script>",
+                baseUrl, widget.getId(), WidgetJsConstants.CURRENT_VERSION, widget.getId()
         );
         return new WidgetResponse(
                 widget.getId(),
