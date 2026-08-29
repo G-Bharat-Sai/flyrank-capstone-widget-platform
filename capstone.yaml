@@ -1,0 +1,40 @@
+run: docker compose up -d && ./mvnw spring-boot:run
+seed: bash seed.sh
+base_url: http://localhost:3000
+endpoints:
+  - method: POST
+    path: /auth/signup
+    description: Create a widget-owner account. Body {"email","password"} (password >= 8 chars). Returns {"token","email"}.
+  - method: POST
+    path: /auth/login
+    description: Log in an existing owner. Same request/response shape as signup.
+  - method: POST
+    path: /widgets
+    description: Create a widget. Requires Authorization Bearer token. Body includes type, title, fields, buttonText, webhookUrl.
+  - method: GET
+    path: /widgets
+    description: List the authenticated owner's widgets.
+  - method: GET
+    path: /widgets/{id}
+    description: Get one widget the caller owns. Requires auth. 404 for a widget owned by another tenant.
+  - method: PUT
+    path: /widgets/{id}
+    description: Update a widget the caller owns.
+  - method: DELETE
+    path: /widgets/{id}
+    description: Delete a widget the caller owns.
+  - method: GET
+    path: /widgets/{id}/config
+    description: Public, cached widget configuration. No auth required. Used by the embed script. PROBE-relevant caching endpoint.
+  - method: GET
+    path: /widgets/{id}/widget.js
+    description: Public widget JavaScript bundle. No auth. 24h Cache-Control.
+  - method: GET
+    path: /widgets/{id}/widget.v{version}.js
+    description: Public, versioned widget JavaScript bundle. No auth. 1-year Cache-Control. Returns 404 if {version} does not match the widget's currently published version.
+  - method: POST
+    path: /submissions
+    description: Public submission endpoint. No auth. CORS-enabled. Optional Idempotency-Key header. PROBE 1, 2, 3, 5, and 6 all target this endpoint.
+  - method: GET
+    path: /dashboard
+    description: Authenticated owner's aggregate stats -- total submissions, per-widget counts, per-country counts, per-day counts.
