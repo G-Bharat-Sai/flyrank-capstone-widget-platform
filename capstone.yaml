@@ -1,5 +1,6 @@
 run: docker compose up -d && ./mvnw spring-boot:run
 seed: bash seed.sh
+test: ./mvnw test
 base_url: http://localhost:3000
 endpoints:
   - method: POST

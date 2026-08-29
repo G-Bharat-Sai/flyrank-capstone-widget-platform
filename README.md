@@ -116,7 +116,7 @@ It prints the demo owner's email/password, the widget ID, and a ready-to-run `cu
 
 Being upfront about what this project doesn't do, since the brief grades honesty over polish:
 
-- No automated test suite. Every requirement in `EVIDENCE.md` was verified by hand with real HTTP requests and DB queries during development, not by a repeatable `mvn test` run.
+- Automated coverage is solid but not total: 30 MockMvc integration tests (`mvn test`) run against a real Postgres instance and cover auth, widget CRUD and tenant isolation, widget delivery and caching, submission validation, idempotency, the honeypot, and rate limiting. The provider-A-down geo fallback and the full webhook retry-with-alert timing proof are still verified manually only (see `EVIDENCE.md`), since automating those cleanly would mean stubbing external HTTP calls.
 - `widget.js` is served as-is, not minified or bundled for production; there's no build/CDN step.
 - The dashboard is a static page that polls `GET /dashboard` on load - there's no real-time/websocket push when a new submission comes in.
 - Rate limiting is per-IP only (Bucket4j, in-memory), so it resets if the app restarts and won't help against a distributed botnet - it's meant to stop naive abuse, not a determined attacker.
