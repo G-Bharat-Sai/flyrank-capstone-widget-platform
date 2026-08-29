@@ -20,6 +20,7 @@ import java.util.Optional;
 public class SubmissionService {
     private static final int MAX_FIELD_VALUE_LENGTH = 5_000;
     private static final int MAX_PAYLOAD_BYTES = 100_000;
+    private static final long MIN_FILL_TIME_MILLIS = 1_500;
     private final WidgetRepository widgetRepository;
     private final SubmissionRepository submissionRepository;
     private final ObjectMapper objectMapper;
@@ -38,6 +39,12 @@ public class SubmissionService {
         }
         if (request.honeypot() != null && !request.honeypot().isBlank()) {
             return Optional.empty();
+        }
+        if (request.formRenderedAt() != null) {
+            long fillTimeMillis = System.currentTimeMillis() - request.formRenderedAt();
+            if (fillTimeMillis >= 0 && fillTimeMillis < MIN_FILL_TIME_MILLIS) {
+                return Optional.empty();
+            }
         }
         validateFieldsAgainstWidgetSchema(widget, request.fields());
         String payloadJson = writeJson(request.fields());

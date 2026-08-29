@@ -201,4 +201,39 @@ class SubmissionControllerIntegrationTest {
 
         assertNotEquals(firstResponse.id(), secondResponse.id());
     }
+
+    @Test
+    void submissionSubmittedTooQuicklyAfterFormRenderIsSilentlyDropped() throws Exception {
+        WidgetResponse widget = createWidgetAsNewOwner();
+        long renderedAt = System.currentTimeMillis();
+        String body = "{\"widgetId\":\"" + widget.id() + "\",\"fields\":{\"email\":\"visitor@example.com\"},\"formRenderedAt\":" + renderedAt + "}";
+
+        mockMvc.perform(post("/submissions")
+                        .header("X-Forwarded-For", TestSupport.uniqueIp())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        long storedForThisWidget = submissionRepository.findAll().stream()
+                .filter(s -> s.getWidgetId().equals(widget.id()))
+                .count();
+        assertEquals(0, storedForThisWidget);
+    }
+
+    @Test
+    void submissionSubmittedAfterAReasonableFillTimeIsStored() throws Exception {
+        WidgetResponse widget = createWidgetAsNewOwner();
+        long renderedAt = System.currentTimeMillis() - 5000;
+        String body = "{\"widgetId\":\"" + widget.id() + "\",\"fields\":{\"email\":\"visitor@example.com\"},\"formRenderedAt\":" + renderedAt + "}";
+
+        MvcResult result = mockMvc.perform(post("/submissions")
+                        .header("X-Forwarded-For", TestSupport.uniqueIp())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        SubmissionResponse response = objectMapper.readValue(result.getResponse().getContentAsString(), SubmissionResponse.class);
+        assertNotNull(response.id());
+    }
 }

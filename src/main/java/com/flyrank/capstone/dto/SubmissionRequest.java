@@ -9,5 +9,6 @@ import java.util.UUID;
 public record SubmissionRequest(
     @NotNull UUID widgetId,
     @NotNull Map<String, Object> fields,
-    String honeypot
+    String honeypot,
+    Long formRenderedAt
 ) {}

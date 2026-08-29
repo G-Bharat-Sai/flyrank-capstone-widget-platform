@@ -170,6 +170,7 @@ The response looks successful to the bot (so it doesn't learn to avoid the honey
 SELECT count(*) FROM submissions WHERE payload::text LIKE '%spambot@example.com%';
 count
 0
+A second, independent signal was added later: the embedded widget script records when the form actually rendered and reports it back on submit. A submission completed in under 1.5 seconds is treated the same way as a honeypot hit -- silently dropped, never stored. Proven by the automated tests `submissionSubmittedTooQuicklyAfterFormRenderIsSilentlyDropped` (dropped) and `submissionSubmittedAfterAReasonableFillTimeIsStored` (stored normally) in `SubmissionControllerIntegrationTest`, both passing as part of the 32-test `mvn test` run.
 
 ---
 

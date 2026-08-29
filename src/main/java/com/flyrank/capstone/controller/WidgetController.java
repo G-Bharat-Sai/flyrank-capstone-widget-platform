@@ -40,6 +40,7 @@ public class WidgetController {
                         console.error('FlyRank widget failed to load:', err);
                     });
                 function renderWidget(script, widgetId, baseUrl, config) {
+                    var renderedAt = Date.now();
                     var container = document.createElement('div');
                     container.className = 'flyrank-widget';
                     container.style.cssText = 'max-width:400px;font-family:sans-serif;border:1px solid #ddd;border-radius:8px;padding:16px;';
@@ -90,7 +91,8 @@ public class WidgetController {
                             body: JSON.stringify({
                                 widgetId: widgetId,
                                 fields: fields,
-                                honeypot: honeypot.value
+                                honeypot: honeypot.value,
+                                formRenderedAt: renderedAt
                             })
                         })
                         .then(function(res) {
