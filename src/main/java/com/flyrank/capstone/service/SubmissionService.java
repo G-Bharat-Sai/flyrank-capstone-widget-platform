@@ -10,12 +10,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class SubmissionService {
+    private static final int MAX_FIELD_VALUE_LENGTH = 5_000;
+    private static final int MAX_PAYLOAD_BYTES = 100_000;
     private final WidgetRepository widgetRepository;
     private final SubmissionRepository submissionRepository;
     private final ObjectMapper objectMapper;
@@ -28,10 +31,14 @@ public class SubmissionService {
             return Optional.empty();
         }
         validateFieldsAgainstWidgetSchema(widget, request.fields());
+        String payloadJson = writeJson(request.fields());
+        if (payloadJson.getBytes(StandardCharsets.UTF_8).length > MAX_PAYLOAD_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Submission payload exceeds maximum size of " + MAX_PAYLOAD_BYTES + " bytes");
+        }
         Submission.SubmissionBuilder builder = Submission.builder()
                 .widgetId(widget.getId())
                 .ownerId(widget.getOwnerId())
-                .payload(writeJson(request.fields()))
+                .payload(payloadJson)
                 .ipAddress(ipAddress);
         geoEnrichmentService.lookup(ipAddress).ifPresent(geo -> {
             builder.geoCountry(geo.country());
@@ -64,6 +71,12 @@ public class SubmissionService {
         }
         if (submittedFields.size() > 50) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Too many fields submitted");
+        }
+        for (Map.Entry<String, Object> entry : submittedFields.entrySet()) {
+            String value = String.valueOf(entry.getValue());
+            if (value.length() > MAX_FIELD_VALUE_LENGTH) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Field '" + entry.getKey() + "' exceeds maximum length of " + MAX_FIELD_VALUE_LENGTH + " characters");
+            }
         }
     }
     private String writeJson(Object value) {
