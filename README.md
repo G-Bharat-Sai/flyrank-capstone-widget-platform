@@ -1,12 +1,131 @@
-﻿# FlyRank Capstone - Embeddable Widget & Lead-Capture Platform
+# FlyRank Capstone - Embeddable Widget & Lead-Capture Platform
 
-This is my capstone project for the FlyRank backend internship.
+This is my backend capstone for the FlyRank internship track. It's a small SaaS-style platform: a business signs up, builds a "widget" (a signup form, contact form, or popover) through a dashboard, and gets a two-line embed snippet to paste into their own website. Visitors to that website fill out the embedded form, and the submission gets captured, enriched, and stored - visible back in the business owner's dashboard.
 
-The idea: a customer can create a widget (signup form, contact form, or
-popup), get a single script tag to paste into their site, and then any
-visitor who fills it out gets validated, rate-limited, spam-checked, and
-geo-enriched before being stored. The widget owner can log in and see
-their submissions on a dashboard.
+Think of it as a tiny, self-hosted version of something like a Mailchimp popup form or Typeform embed, built from scratch to show real backend engineering: auth, multi-tenant data isolation, rate limiting, external API integration with graceful degradation, a safe async-style side effect, cached public delivery, and an aggregation-heavy dashboard API - all backed by hand-written SQL rather than an ORM hiding what's actually happening.
 
-Still building this out. Setup steps and API docs go here once it's
-working end to end.
+## Architecture
+
+```
+Visitor's website (embeds a <script> tag)
+        |
+        v
+GET /widgets/{id}/config, /widgets/{id}/widget.v{n}.js   (public, cached)
+        |
+        v
+Visitor fills out the rendered form
+        |
+        v
+POST /submissions   (public, rate-limited, honeypot, idempotent)
+        |
+        v
+SubmissionService
+  1. validate fields + honeypot check
+  2. save submission to PostgreSQL (sync)
+  3. geo-enrich: provider A -> provider B -> null (best effort)
+  4. webhook notify: @Async, retries with backoff, ERROR alert on failure
+        |
+        v
+PostgreSQL (owners, widgets, submissions)
+
+
+Business owner's browser
+        |
+        v
+JWT-authenticated JSON API
+  POST/GET/PUT/DELETE /widgets
+  GET /dashboard  (aggregate stats via native SQL)
+        |
+        v
+PostgreSQL (same database, owner-scoped rows only)
+```
+
+Everything a visitor triggers (`POST /submissions`) is public and unauthenticated by design; everything an owner does (create/list/update/delete widgets, view the dashboard) requires a JWT. Widget delivery (`/widgets/{id}/config`, `/widgets/{id}/widget.js`, `/widgets/{id}/widget.v{n}.js`) is public and cached, but never exposes owner-only fields like the webhook URL.
+
+## How it's built
+
+- **Java 21 / Spring Boot 4.1.1** (Spring Framework 7, Hibernate 7)
+- **PostgreSQL 16** via Docker Compose, with **Flyway** for versioned, hand-written SQL migrations - no auto-generated schema
+- **Spring Security + JWT** (HMAC-SHA256) for stateless auth
+- **Bucket4j** for per-IP rate limiting
+- Plain **java.net.http.HttpClient** for outbound calls to the geo-lookup providers and webhook deliveries (deliberately not a Spring abstraction, to sidestep framework version churn)
+- A single static HTML/vanilla-JS dashboard page - no frontend framework, no build step
+- Native SQL for every aggregate query in the dashboard (`GROUP BY`, date truncation) rather than pulling rows into Java and counting in memory
+
+## What a widget owner can do
+
+1. Sign up and log in (`/auth/signup`, `/auth/login`) - passwords hashed with BCrypt, sessions are stateless JWTs.
+2. Create a widget (`POST /widgets`) with a custom set of fields (name, email, whatever), a button label, and optionally a webhook URL to get notified of new submissions.
+3. Copy the embed snippet from the widget's response and paste it into any website. That's a `<script>` tag pointing at `/widgets/{id}/widget.v{version}.js`.
+4. Watch submissions roll in on the dashboard (`/dashboard-ui/index.html`) - total counts, per-widget breakdown, geo distribution by country, and a daily submission count, all pulled from one `GET /dashboard` call.
+
+## What a visitor sees
+
+Nothing related to FlyRank at all - just a small form rendered inline on the business's own page. The embed script is a single generic script shared by every widget; it fetches that widget's specific field configuration from `/widgets/{id}/config`, builds the form dynamically, and posts the result to `/submissions`. A hidden honeypot field silently drops obvious bot submissions without giving the bot any feedback that it failed.
+
+## Running it locally
+
+You'll need Docker, and a JDK (the project targets Java 21; I built it with JDK 25 using `--release 21`).
+
+```powershell
+docker compose up -d
+.\mvnw.cmd clean compile
+.\mvnw.cmd spring-boot:run
+```
+
+The app starts on port 3000 by default (`http://localhost:3000`). Flyway runs the schema migrations automatically on startup - there's no manual database setup step.
+
+Config lives in `src/main/resources/application.properties`, with sane defaults for local development baked in (database credentials, JWT secret, geo provider URLs). See `.env.example` for the full list of variables it reads - set them as real environment variables if you want to override anything; the app does not auto-load a `.env` file (see the note on that below).
+
+### Seeding demo data
+
+Once the app is running, `seed.sh` signs up a demo owner, creates a demo widget, and submits two sample leads against it, so there's real data to look at immediately:
+
+```bash
+bash seed.sh
+```
+
+It prints the demo owner's email/password, the widget ID, and a ready-to-run `curl` command for `GET /dashboard` so you can see the seeded submissions without doing anything else by hand.
+
+## API surface
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/auth/signup` | none | Create an owner account |
+| POST | `/auth/login` | none | Get a JWT |
+| POST | `/widgets` | JWT | Create a widget |
+| GET | `/widgets` | JWT | List your widgets |
+| GET | `/widgets/{id}` | JWT | Get one widget (owner-scoped) |
+| PUT | `/widgets/{id}` | JWT | Update a widget |
+| DELETE | `/widgets/{id}` | JWT | Delete a widget |
+| GET | `/widgets/{id}/config` | none | Public, cached widget config (no secrets) |
+| GET | `/widgets/{id}/widget.js` | none | Public, cached embeddable script (unversioned, kept for backward compatibility) |
+| GET | `/widgets/{id}/widget.v{version}.js` | none | Public, cached, versioned embeddable script (404 on unknown version) |
+| POST | `/submissions` | none | Public submission endpoint (rate-limited, honeypot-protected, supports `Idempotency-Key` header) |
+| GET | `/dashboard` | JWT | Aggregate stats for the current owner |
+
+## A few things worth knowing
+
+**The `.env` file isn't actually auto-loaded.** `application.properties` reads from real OS environment variables first and falls back to safe local-dev defaults (`${DB_USERNAME:postgres}` style), which is why nothing has ever broken - but a `.env` file sitting in the project root does nothing on its own. I tried wiring up a library for this (`spring-dotenv`) and found it's not compatible with this Spring Boot version, so I backed it out rather than fight it. `.env.example` documents the variables; set them as real environment variables if you want non-default values.
+
+**Public endpoints never leak owner-only data.** `/widgets/{id}/config`, the only public read of widget data, deliberately excludes the webhook URL and owner ID - those only ever appear in the authenticated `/widgets` responses.
+
+**Nothing external can break a submission.** Geo lookup and webhook delivery both run with short timeouts, catch every exception, and log failures - a submission always succeeds or fails based only on its own validity, never on whether a third-party service happens to be reachable.
+
+## Limitations
+
+Being upfront about what this project doesn't do, since the brief grades honesty over polish:
+
+- No automated test suite. Every requirement in `EVIDENCE.md` was verified by hand with real HTTP requests and DB queries during development, not by a repeatable `mvn test` run.
+- `widget.js` is served as-is, not minified or bundled for production; there's no build/CDN step.
+- The dashboard is a static page that polls `GET /dashboard` on load - there's no real-time/websocket push when a new submission comes in.
+- Rate limiting is per-IP only (Bucket4j, in-memory), so it resets if the app restarts and won't help against a distributed botnet - it's meant to stop naive abuse, not a determined attacker.
+- Spam protection is a single honeypot field. There's no CAPTCHA, no bot-fingerprinting, no ML-based filtering.
+- Geo enrichment is best-effort: if both providers are down, the submission is still saved with the country left null, exactly as the brief expects, but there's no retry queue for enrichment specifically (only webhook delivery gets retried).
+- No widget targeting rules (e.g. show only to visitors from a given country) and no double opt-in / GDPR consent flow - both listed as stretch goals in the brief, not attempted here.
+
+## Project docs
+
+- `DESIGN.md` - the original design doc (data model, embed flow, API contracts) written before implementation started
+- `EVIDENCE.md` - proof that each requirement in the brief actually works, with real request/response evidence
+- `BUILDLOG.md` - an honest log of how this was built, including the AI pair-programming process and the real bugs hit along the way
