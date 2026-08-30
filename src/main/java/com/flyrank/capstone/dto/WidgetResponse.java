@@ -16,5 +16,6 @@ public record WidgetResponse(
     String embedSnippet,
     OffsetDateTime createdAt,
     OffsetDateTime updatedAt,
-    boolean requireProofOfWork
+    boolean requireProofOfWork,
+    boolean requireDoubleOptIn
 ) {}

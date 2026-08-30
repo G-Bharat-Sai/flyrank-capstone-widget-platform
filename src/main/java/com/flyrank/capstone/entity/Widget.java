@@ -42,6 +42,9 @@ public class Widget {
     @Column(name = "require_proof_of_work", nullable = false)
     @Builder.Default
     private boolean requireProofOfWork = false;
+    @Column(name = "require_double_opt_in", nullable = false)
+    @Builder.Default
+    private boolean requireDoubleOptIn = false;
     @Column(nullable = false)
     @Builder.Default
     private Integer version = 1;

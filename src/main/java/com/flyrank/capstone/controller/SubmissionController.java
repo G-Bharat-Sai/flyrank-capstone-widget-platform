@@ -1,5 +1,6 @@
 package com.flyrank.capstone.controller;
 import com.flyrank.capstone.dto.ChallengeResponse;
+import com.flyrank.capstone.dto.SubmissionExportResponse;
 import com.flyrank.capstone.dto.SubmissionRequest;
 import com.flyrank.capstone.dto.SubmissionResponse;
 import com.flyrank.capstone.service.PowChallengeService;
@@ -9,7 +10,9 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -17,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 @RestController
 @RequestMapping("/submissions")
 @RequiredArgsConstructor
@@ -37,6 +41,19 @@ public class SubmissionController {
     @GetMapping("/challenge")
     public ResponseEntity<ChallengeResponse> getChallenge() {
         return ResponseEntity.ok(powChallengeService.issueChallenge());
+    }
+    @GetMapping("/{id}/confirm")
+    public ResponseEntity<SubmissionResponse> confirm(@PathVariable UUID id) {
+        return ResponseEntity.ok(submissionService.confirm(id));
+    }
+    @GetMapping("/{id}/export")
+    public ResponseEntity<SubmissionExportResponse> export(@PathVariable UUID id) {
+        return ResponseEntity.ok(submissionService.export(id));
+    }
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteSubmission(@PathVariable UUID id) {
+        submissionService.deleteSubmission(id);
+        return ResponseEntity.noContent().build();
     }
     private String extractClientIp(HttpServletRequest request) {
         String forwardedFor = request.getHeader("X-Forwarded-For");

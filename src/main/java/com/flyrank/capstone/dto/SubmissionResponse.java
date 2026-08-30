@@ -6,5 +6,6 @@ import java.util.UUID;
 public record SubmissionResponse(
     UUID id,
     UUID widgetId,
-    OffsetDateTime createdAt
+    OffsetDateTime createdAt,
+    boolean confirmed
 ) {}

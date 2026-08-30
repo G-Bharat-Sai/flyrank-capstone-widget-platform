@@ -102,7 +102,7 @@ The response looks successful to the bot (so it doesn't learn to avoid the honey
 SELECT count(*) FROM submissions WHERE payload::text LIKE '%spambot@example.com%';
 count
 0
-A second, independent signal was added later: the embedded widget script records when the form actually rendered and reports it back on submit. A submission completed in under 1.5 seconds is treated the same way as a honeypot hit -- silently dropped, never stored. Proven by the automated tests `submissionSubmittedTooQuicklyAfterFormRenderIsSilentlyDropped` (dropped) and `submissionSubmittedAfterAReasonableFillTimeIsStored` (stored normally) in `SubmissionControllerIntegrationTest`, both passing as part of the 41-test `mvn test` run.
+A second, independent signal was added later: the embedded widget script records when the form actually rendered and reports it back on submit. A submission completed in under 1.5 seconds is treated the same way as a honeypot hit -- silently dropped, never stored. Proven by the automated tests `submissionSubmittedTooQuicklyAfterFormRenderIsSilentlyDropped` (dropped) and `submissionSubmittedAfterAReasonableFillTimeIsStored` (stored normally) in `SubmissionControllerIntegrationTest`, both passing as part of the 46-test `mvn test` run.
 A third, opt-in layer (proof-of-work) is documented in its own stretch-goal section below.
 ---
 ## Enrichment & safe side effects
@@ -141,7 +141,7 @@ Webhook delivery runs as a background job (separate thread `webhook-async-1`) af
 Proven by two automated tests in `DashboardStreamIntegrationTest`:
 - `streamingWithoutAuthIsRejected` -- confirms the stream endpoint is owner-authenticated like the rest of `/dashboard`, not a hole in the auth model.
 - `ownerReceivesLiveEventWhenANewSubmissionArrivesForTheirWidget` -- opens the stream as an authenticated owner, submits a real lead against that owner's widget, and asserts the emitted SSE bytes actually contain the new submission's widget ID, proving the push genuinely happens rather than just that the endpoint returns 200.
-Both pass as part of the 41-test `mvn test` run.
+Both pass as part of the 46-test `mvn test` run.
 One deliberate design choice: the browser's native `EventSource` API cannot send custom headers, and this app's entire auth model is `Authorization: Bearer <jwt>` -- there is no session cookie to fall back on. Rather than weaken auth by passing the token in a query string (which would leak it into server logs and browser history), the dashboard UI (`dashboard-ui/index.html`) opens the stream with `fetch()`, like every other authenticated call it makes, and manually parses the SSE wire format out of the streamed response body. The trade-off is losing `EventSource`'s built-in auto-reconnect, which is why the client implements its own 3-second reconnect loop instead.
 ---
 ## Stretch goal: proof-of-work bot defense
@@ -153,7 +153,7 @@ Proven by four automated tests in `ProofOfWorkIntegrationTest`:
 - `submissionWithACorrectlySolvedChallengeIsStored` -- a real client-side solve (SHA-256, difficulty 4, brute-forced in Java the same way the browser does it in JS) took 198ms in this test run, and the submission carrying that solution is then accepted and stored normally.
 - `aSolvedChallengeCannotBeReplayedForASecondSubmission` -- the same solved challenge is submitted twice; only the first attempt is stored, proving single-use/consume-on-verify.
 - `widgetsWithoutProofOfWorkRequiredDoNotNeedAChallenge` -- a widget with the flag left off (the default) accepts a plain submission with no challenge at all, confirming full backward compatibility with every widget created before this feature existed.
-All four pass as part of the 41-test `mvn test` run.
+All four pass as part of the 46-test `mvn test` run.
 One trade-off worth being explicit about: `GET /submissions/challenge` shares the same per-IP rate-limit bucket as `POST /submissions` (both match the `/submissions/**` path the rate limiter guards), rather than getting a bucket of its own. A visitor submitting to a PoW-enabled widget spends two rate-limit tokens per real submission -- one to fetch the challenge, one to submit -- instead of one, roughly halving the effective throughput ceiling for PoW-enabled widgets under the existing limit. That's an accepted cost: proof-of-work is opt-in, and a widget owner turning it on is already choosing to slow submissions down in exchange for spam resistance.
 ---
 ## Stretch goal: widget targeting rules
@@ -163,6 +163,20 @@ The decision logic lives in `maybeRenderWidget`, which runs before the existing 
 Proven by an automated, deterministic Node script (`scripts/test-targeting-logic.js`, run via `node scripts/test-targeting-logic.js`), covering the page-matching rules (exact match, wildcard prefix match, no-match, multiple patterns) and the once-per-visitor state transition, against an in-memory stand-in for the two-method `getItem`/`setItem` contract the real script calls:
 All targeting-rule logic assertions passed.
 Honest limitation: this proves the decision logic is correct in isolation, not a full live-browser render. No browser test runner (jsdom/Playwright) was added, consistent with keeping this a backend-focused capstone, so the actual `setTimeout` delay and `localStorage` persistence inside a real page were not separately captured as automated or screenshot evidence this pass -- both are standard browser APIs already exercised elsewhere in this same script, proven live in the existing cross-origin rendering evidence above.
+---
+## Stretch goal: double opt-in + GDPR
+### A widget can require double opt-in consent before a submission is accepted, and visitors can confirm, export, or delete their own data.
+`Widget.requireDoubleOptIn` (default `false`) turns this on per widget without touching any of the existing submission tests, none of which send consent data -- the same opt-in-per-widget pattern already used for `requireProofOfWork`.
+When enabled, a submission missing a checked consent box is rejected outright with a `400` and a clear message ("Consent is required for this widget") -- unlike the bot-defense mechanisms (honeypot, fill-time, proof-of-work), which fail silently on purpose so as not to tip off a bot, a missing consent checkbox is a legitimate thing a real visitor might just forget, so it gets a loud, actionable error instead. A consented submission is stored with `consentGiven = true` and a `consentAt` timestamp, but `confirmedAt` is left null until the visitor visits `GET /submissions/{id}/confirm` -- the link a real confirmation email would contain. No mail provider is wired up here (out of scope for a backend capstone), so the "email" is logged to the console instead: `[ConfirmationEmail] To: ... | Subject: Please confirm your submission | Body: Click to confirm: .../submissions/{id}/confirm`.
+Two self-service endpoints let a visitor manage their own data without any separate visitor auth system: `GET /submissions/{id}/export` returns everything stored for that submission (fields, timestamps, consent state, geo), and `DELETE /submissions/{id}` erases it outright. Both rely on the submission's own UUID `id` as the visitor's proof of ownership -- it was already handed back to them in the original `POST /submissions` response, and a 122-bit random UUID is not guessable, so this needed no new token or login system.
+Proven by five automated tests in `DoubleOptInIntegrationTest`:
+- `submissionWithoutConsentIsRejectedWhenWidgetRequiresDoubleOptIn` -- a submission with no consent flag against a double-opt-in widget gets a `400`, never stored.
+- `submissionWithConsentIsStoredUnconfirmedThenConfirmEndpointMarksItConfirmed` -- a consented submission comes back with `confirmed: false`; calling the confirm endpoint on its own `id` flips it to `confirmed: true`.
+- `exportEndpointReturnsTheVisitorsOwnData` -- the export endpoint returns the submitted field values, the widget ID, and the consent/geo metadata for that specific submission.
+- `deleteEndpointRemovesTheSubmissionAndSubsequentExportReturnsNotFound` -- deleting the submission by its own `id` succeeds, and a subsequent export attempt on the same `id` correctly 404s.
+- `widgetsWithoutDoubleOptInAreAutoConfirmedAndDoNotNeedConsent` -- a widget with the flag left off (the default) accepts a plain submission with no consent at all, and it comes back already `confirmed: true`, confirming full backward compatibility with every widget created before this feature existed.
+All five pass as part of the 46-test `mvn test` run.
+Honest limitations: the "confirmation email" is logged, not actually sent -- there's no real mail provider integration here. And a submission's own UUID doubling as its owner's proof of access is a deliberate simplification for a backend capstone; a production system handling real GDPR requests would likely want a shorter-lived, single-use confirmation/access token instead of a permanent identifier that (like the submission ID itself) is already visible to anyone who intercepted the original response.
 ---
 ## Documentation
 ### README with architecture diagram, setup instructions, and API documentation; the required project files are present.

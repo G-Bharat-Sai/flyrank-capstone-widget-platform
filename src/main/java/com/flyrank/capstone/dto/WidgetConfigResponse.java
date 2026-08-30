@@ -11,5 +11,6 @@ public record WidgetConfigResponse(
     String buttonText,
     Map<String, Object> displayOptions,
     int version,
-    boolean requireProofOfWork
+    boolean requireProofOfWork,
+    boolean requireDoubleOptIn
 ) {}

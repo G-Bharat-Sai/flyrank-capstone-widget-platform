@@ -47,6 +47,7 @@ public class WidgetService {
                 .displayOptions(request.displayOptions() != null ? writeJson(request.displayOptions()) : null)
                 .webhookUrl(request.webhookUrl())
                 .requireProofOfWork(Boolean.TRUE.equals(request.requireProofOfWork()))
+                .requireDoubleOptIn(Boolean.TRUE.equals(request.requireDoubleOptIn()))
                 .version(1)
                 .build();
         widgetRepository.save(widget);
@@ -77,7 +78,8 @@ public class WidgetService {
                 widget.getButtonText(),
                 readDisplayOptions(widget.getDisplayOptions()),
                 widget.getVersion(),
-                widget.isRequireProofOfWork()
+                widget.isRequireProofOfWork(),
+                widget.isRequireDoubleOptIn()
         );
     }
     public WidgetResponse update(UUID id, CreateWidgetRequest request) {
@@ -91,6 +93,7 @@ public class WidgetService {
         widget.setDisplayOptions(request.displayOptions() != null ? writeJson(request.displayOptions()) : null);
         widget.setWebhookUrl(request.webhookUrl());
         widget.setRequireProofOfWork(Boolean.TRUE.equals(request.requireProofOfWork()));
+        widget.setRequireDoubleOptIn(Boolean.TRUE.equals(request.requireDoubleOptIn()));
         widget.setVersion(widget.getVersion() + 1);
         widgetRepository.save(widget);
         return toResponse(widget);
@@ -150,7 +153,8 @@ public class WidgetService {
                 embedSnippet,
                 widget.getCreatedAt(),
                 widget.getUpdatedAt(),
-                widget.isRequireProofOfWork()
+                widget.isRequireProofOfWork(),
+                widget.isRequireDoubleOptIn()
         );
     }
 }

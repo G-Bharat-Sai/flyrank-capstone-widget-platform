@@ -12,5 +12,6 @@ public record CreateWidgetRequest(
     String buttonText,
     Map<String, Object> displayOptions,
     String webhookUrl,
-    Boolean requireProofOfWork
+    Boolean requireProofOfWork,
+    Boolean requireDoubleOptIn
 ) {}

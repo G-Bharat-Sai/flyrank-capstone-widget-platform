@@ -1,5 +1,6 @@
 package com.flyrank.capstone.service;
 import tools.jackson.databind.ObjectMapper;
+import com.flyrank.capstone.dto.SubmissionExportResponse;
 import com.flyrank.capstone.dto.SubmissionRequest;
 import com.flyrank.capstone.dto.SubmissionResponse;
 import com.flyrank.capstone.entity.Submission;
@@ -7,14 +8,17 @@ import com.flyrank.capstone.entity.Widget;
 import com.flyrank.capstone.repository.SubmissionRepository;
 import com.flyrank.capstone.repository.WidgetRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class SubmissionService {
@@ -28,6 +32,8 @@ public class SubmissionService {
     private final WebhookService webhookService;
     private final SubmissionEventBroadcaster submissionEventBroadcaster;
     private final PowChallengeService powChallengeService;
+    @Value("${app.base-url:http://localhost:3000}")
+    private String baseUrl;
     public Optional<SubmissionResponse> submit(SubmissionRequest request, String ipAddress, String idempotencyKey) {
         Widget widget = widgetRepository.findById(request.widgetId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Widget not found"));
@@ -36,7 +42,7 @@ public class SubmissionService {
             Optional<Submission> existing = submissionRepository.findByWidgetIdAndIdempotencyKey(widget.getId(), idempotencyKey);
             if (existing.isPresent()) {
                 Submission s = existing.get();
-                return Optional.of(new SubmissionResponse(s.getId(), s.getWidgetId(), s.getCreatedAt()));
+                return Optional.of(new SubmissionResponse(s.getId(), s.getWidgetId(), s.getCreatedAt(), s.getConfirmedAt() != null));
             }
         }
         if (request.honeypot() != null && !request.honeypot().isBlank()) {
@@ -53,6 +59,9 @@ public class SubmissionService {
                 return Optional.empty();
             }
         }
+        if (widget.isRequireDoubleOptIn() && !Boolean.TRUE.equals(request.consent())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Consent is required for this widget");
+        }
         validateFieldsAgainstWidgetSchema(widget, request.fields());
         String payloadJson = writeJson(request.fields());
         if (payloadJson.getBytes(StandardCharsets.UTF_8).length > MAX_PAYLOAD_BYTES) {
@@ -64,6 +73,11 @@ public class SubmissionService {
                 .payload(payloadJson)
                 .ipAddress(ipAddress)
                 .idempotencyKey(hasIdempotencyKey ? idempotencyKey : null);
+        if (widget.isRequireDoubleOptIn()) {
+            builder.consentGiven(true).consentAt(OffsetDateTime.now());
+        } else {
+            builder.confirmedAt(OffsetDateTime.now());
+        }
         geoEnrichmentService.lookup(ipAddress).ifPresent(geo -> {
             builder.geoCountry(geo.country());
             builder.geoCity(geo.city());
@@ -78,12 +92,45 @@ public class SubmissionService {
             }
             Submission winner = submissionRepository.findByWidgetIdAndIdempotencyKey(widget.getId(), idempotencyKey)
                     .orElseThrow(() -> e);
-            return Optional.of(new SubmissionResponse(winner.getId(), winner.getWidgetId(), winner.getCreatedAt()));
+            return Optional.of(new SubmissionResponse(winner.getId(), winner.getWidgetId(), winner.getCreatedAt(), winner.getConfirmedAt() != null));
         }
         webhookService.notify(widget, submission, request.fields());
-        SubmissionResponse response = new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt());
+        if (widget.isRequireDoubleOptIn()) {
+            logConfirmationEmail(request, submission);
+        }
+        SubmissionResponse response = new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt(), submission.getConfirmedAt() != null);
         submissionEventBroadcaster.publishNewSubmission(widget.getOwnerId(), response, widget.getTitle());
         return Optional.of(response);
+    }
+    public SubmissionResponse confirm(UUID id) {
+        Submission submission = submissionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found"));
+        if (submission.getConfirmedAt() == null) {
+            submission.setConfirmedAt(OffsetDateTime.now());
+            submissionRepository.save(submission);
+        }
+        return new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt(), true);
+    }
+    public SubmissionExportResponse export(UUID id) {
+        Submission submission = submissionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found"));
+        return new SubmissionExportResponse(
+                submission.getId(),
+                submission.getWidgetId(),
+                readPayload(submission.getPayload()),
+                submission.getCreatedAt(),
+                submission.getConfirmedAt() != null,
+                submission.getConfirmedAt(),
+                submission.isConsentGiven(),
+                submission.getConsentAt(),
+                submission.getGeoCountry(),
+                submission.getGeoCity()
+        );
+    }
+    public void deleteSubmission(UUID id) {
+        Submission submission = submissionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found"));
+        submissionRepository.delete(submission);
     }
     @SuppressWarnings("unchecked")
     private void validateFieldsAgainstWidgetSchema(Widget widget, Map<String, Object> submittedFields) {
@@ -119,6 +166,21 @@ public class SubmissionService {
             return objectMapper.writeValueAsString(value);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid submission data");
+        }
+    }
+    private void logConfirmationEmail(SubmissionRequest request, Submission submission) {
+        Object emailValue = request.fields().get("email");
+        String email = emailValue != null ? String.valueOf(emailValue) : "(no email field on this widget)";
+        System.out.println("[ConfirmationEmail] To: " + email
+                + " | Subject: Please confirm your submission"
+                + " | Body: Click to confirm: " + baseUrl + "/submissions/" + submission.getId() + "/confirm");
+    }
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readPayload(String json) {
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            return Map.of();
         }
     }
 }

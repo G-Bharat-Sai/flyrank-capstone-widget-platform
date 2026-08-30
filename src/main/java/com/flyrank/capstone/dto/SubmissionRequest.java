@@ -8,5 +8,6 @@ public record SubmissionRequest(
     String honeypot,
     Long formRenderedAt,
     String challengeId,
-    String challengeNonce
+    String challengeNonce,
+    Boolean consent
 ) {}

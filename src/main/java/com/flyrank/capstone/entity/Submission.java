@@ -37,6 +37,13 @@ public class Submission {
     private String geoCity;
     @Column(name = "geo_provider_used", length = 20)
     private String geoProviderUsed;
+    @Column(name = "confirmed_at")
+    private OffsetDateTime confirmedAt;
+    @Column(name = "consent_given", nullable = false)
+    @Builder.Default
+    private boolean consentGiven = false;
+    @Column(name = "consent_at")
+    private OffsetDateTime consentAt;
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
     @PrePersist
