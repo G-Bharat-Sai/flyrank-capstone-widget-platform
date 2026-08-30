@@ -1,5 +1,5 @@
 # EVIDENCE.md
-One pasted proof per Requirements checkbox in Section 6 of the capstone brief. All output below is real, captured directly from this system during development (dates/times are as they occurred).
+One pasted proof per item in the Requirements checklist below. All output is real, captured directly from this system during development (dates/times are as they occurred).
 ---
 ## Widget management
 ### Authenticated CRUD endpoints for widgets; requests without valid auth are rejected.
@@ -156,8 +156,16 @@ Proven by four automated tests in `ProofOfWorkIntegrationTest`:
 All four pass as part of the 41-test `mvn test` run.
 One trade-off worth being explicit about: `GET /submissions/challenge` shares the same per-IP rate-limit bucket as `POST /submissions` (both match the `/submissions/**` path the rate limiter guards), rather than getting a bucket of its own. A visitor submitting to a PoW-enabled widget spends two rate-limit tokens per real submission -- one to fetch the challenge, one to submit -- instead of one, roughly halving the effective throughput ceiling for PoW-enabled widgets under the existing limit. That's an accepted cost: proof-of-work is opt-in, and a widget owner turning it on is already choosing to slow submissions down in exchange for spam resistance.
 ---
+## Stretch goal: widget targeting rules
+### A widget can be configured to show only on certain pages, after a delay, or once per visitor.
+No schema or API change was needed: `Widget.displayOptions` was already a free-form JSONB map, already round-tripping end-to-end from `CreateWidgetRequest.displayOptions` through to the public `GET /widgets/{id}/config` response. Three keys inside it are now recognized by the widget script: `targetPages` (an array of exact page paths, or `prefix*` wildcards), `delaySeconds` (render after a delay), and `oncePerVisitor` (skip rendering if this browser has already seen the widget, tracked in `localStorage`).
+The decision logic lives in `maybeRenderWidget`, which runs before the existing `renderWidget` function and either returns immediately (page doesn't match, or already seen by this visitor), calls `renderWidget` after a `setTimeout`, or calls it immediately -- `renderWidget` itself is untouched, which is also why `WidgetDeliveryIntegrationTest`'s minification test still passes without modification.
+Proven by an automated, deterministic Node script (`scripts/test-targeting-logic.js`, run via `node scripts/test-targeting-logic.js`), covering the page-matching rules (exact match, wildcard prefix match, no-match, multiple patterns) and the once-per-visitor state transition, against an in-memory stand-in for the two-method `getItem`/`setItem` contract the real script calls:
+All targeting-rule logic assertions passed.
+Honest limitation: this proves the decision logic is correct in isolation, not a full live-browser render. No browser test runner (jsdom/Playwright) was added, consistent with keeping this a backend-focused capstone, so the actual `setTimeout` delay and `localStorage` persistence inside a real page were not separately captured as automated or screenshot evidence this pass -- both are standard browser APIs already exercised elsewhere in this same script, proven live in the existing cross-origin rendering evidence above.
+---
 ## Documentation
-### README with architecture diagram, setup instructions, and API documentation; the required files from Section 11 present.
+### README with architecture diagram, setup instructions, and API documentation; the required project files are present.
 See README.md, capstone.yaml, BUILDLOG.md, and .env.example in the repository root.
 ---
 ## Shared requirements (every capstone must show these)

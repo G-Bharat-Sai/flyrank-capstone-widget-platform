@@ -1,4 +1,4 @@
-﻿# Design — FlyRank Capstone: Embeddable Widget & Lead-Capture Platform
+# Design - FlyRank Capstone: Embeddable Widget & Lead-Capture Platform
 
 ## Data model
 
@@ -60,4 +60,4 @@
 
 ## Non-goal
 
-This capstone will not build a real-time dashboard (no WebSockets or Server-Sent Events for live-updating submissions). The dashboard is a polling/refresh-based read of stored data via REST endpoints only. Real-time updates are explicitly listed as a stretch goal in the brief and are out of scope for the core build.
+This capstone will not build a real-time dashboard (no WebSockets or Server-Sent Events for live-updating submissions). The dashboard is a polling/refresh-based read of stored data via REST endpoints only. Real-time updates are explicitly a stretch goal and are out of scope for the core build.

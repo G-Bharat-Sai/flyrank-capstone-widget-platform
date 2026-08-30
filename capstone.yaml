@@ -26,7 +26,7 @@ endpoints:
     description: Delete a widget the caller owns.
   - method: GET
     path: /widgets/{id}/config
-    description: Public, cached widget configuration. No auth required. Used by the embed script. PROBE-relevant caching endpoint.
+    description: Public, cached widget configuration. No auth required. Used by the embed script; served with cache headers for CDN-style caching.
   - method: GET
     path: /widgets/{id}/widget.js
     description: Public widget JavaScript bundle. No auth. 24h Cache-Control.
@@ -35,7 +35,7 @@ endpoints:
     description: Public, versioned widget JavaScript bundle. No auth. 1-year Cache-Control. Returns 404 if {version} does not match the widget's currently published version.
   - method: POST
     path: /submissions
-    description: Public submission endpoint. No auth. CORS-enabled. Optional Idempotency-Key header. PROBE 1, 2, 3, 5, and 6 all target this endpoint.
+    description: Public submission endpoint. No auth. CORS-enabled. Optional Idempotency-Key header. Covers valid submissions, malformed/oversized payloads, rate limiting under a burst, safe side-effect failures, and honeypot spam rejection.
   - method: GET
     path: /dashboard
     description: Authenticated owner's aggregate stats -- total submissions, per-widget counts, per-country counts, per-day counts.
