@@ -14,6 +14,8 @@ import tools.jackson.databind.ObjectMapper;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -86,5 +88,24 @@ class WidgetDeliveryIntegrationTest {
     void invalidWidgetIdPathParameterReturnsCleanBadRequest() throws Exception {
         mockMvc.perform(get("/widgets/not-a-valid-uuid/config"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void versionedWidgetScriptIsMinifiedAndSmallerThanTheUnversionedOne() throws Exception {
+        WidgetResponse widget = createWidgetAsNewOwner();
+
+        MvcResult versioned = mockMvc.perform(get("/widgets/" + widget.id() + "/widget.v1.js"))
+                .andExpect(status().isOk())
+                .andReturn();
+        MvcResult unversioned = mockMvc.perform(get("/widgets/" + widget.id() + "/widget.js"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String versionedBody = versioned.getResponse().getContentAsString();
+        String unversionedBody = unversioned.getResponse().getContentAsString();
+
+        assertTrue(versionedBody.length() < unversionedBody.length());
+        assertTrue(versionedBody.contains("renderWidget"));
+        assertFalse(versionedBody.contains("\n"));
     }
 }

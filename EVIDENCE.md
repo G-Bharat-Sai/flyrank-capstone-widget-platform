@@ -68,6 +68,8 @@ Cache-Control: max-age=86400, public
 
 The URL genuinely changes when the version changes (`widget.v{version}.js`), and a version that hasn't been published 404s rather than silently serving stale or wrong content.
 
+The versioned bundle is also minified: the live source was extracted, whitespace-collapsed (5020 -> 2940 bytes), and syntax-validated with `node --check` before being embedded, while the unversioned `widget.js` still serves the original readable source. Proven by the automated test `versionedWidgetScriptIsMinifiedAndSmallerThanTheUnversionedOne` in `WidgetDeliveryIntegrationTest`, which asserts the versioned response is smaller and contains no newlines.
+
 ### The widget renders on a page served from a different origin than your API.
 
 A plain static HTML page ("Acme Bakery"), served via `python -m http.server 8080`, embeds the widget from the API running on port 3000 -- two genuinely different origins. Screenshot confirms the widget rendered (title "Webhook Test Widget", email field, Submit button) and, after submitting, displayed "Thank you!".
