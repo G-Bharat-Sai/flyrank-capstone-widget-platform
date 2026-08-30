@@ -11,5 +11,6 @@ public record CreateWidgetRequest(
     @NotEmpty @Valid List<WidgetFieldDto> fields,
     String buttonText,
     Map<String, Object> displayOptions,
-    String webhookUrl
+    String webhookUrl,
+    Boolean requireProofOfWork
 ) {}

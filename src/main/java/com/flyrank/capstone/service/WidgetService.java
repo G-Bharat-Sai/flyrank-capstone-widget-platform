@@ -46,6 +46,7 @@ public class WidgetService {
                 .buttonText(request.buttonText() != null ? request.buttonText() : "Submit")
                 .displayOptions(request.displayOptions() != null ? writeJson(request.displayOptions()) : null)
                 .webhookUrl(request.webhookUrl())
+                .requireProofOfWork(Boolean.TRUE.equals(request.requireProofOfWork()))
                 .version(1)
                 .build();
         widgetRepository.save(widget);
@@ -75,7 +76,8 @@ public class WidgetService {
                 readFields(widget.getFields()),
                 widget.getButtonText(),
                 readDisplayOptions(widget.getDisplayOptions()),
-                widget.getVersion()
+                widget.getVersion(),
+                widget.isRequireProofOfWork()
         );
     }
     public WidgetResponse update(UUID id, CreateWidgetRequest request) {
@@ -88,6 +90,7 @@ public class WidgetService {
         widget.setButtonText(request.buttonText() != null ? request.buttonText() : "Submit");
         widget.setDisplayOptions(request.displayOptions() != null ? writeJson(request.displayOptions()) : null);
         widget.setWebhookUrl(request.webhookUrl());
+        widget.setRequireProofOfWork(Boolean.TRUE.equals(request.requireProofOfWork()));
         widget.setVersion(widget.getVersion() + 1);
         widgetRepository.save(widget);
         return toResponse(widget);
@@ -146,7 +149,8 @@ public class WidgetService {
                 widget.getVersion(),
                 embedSnippet,
                 widget.getCreatedAt(),
-                widget.getUpdatedAt()
+                widget.getUpdatedAt(),
+                widget.isRequireProofOfWork()
         );
     }
 }

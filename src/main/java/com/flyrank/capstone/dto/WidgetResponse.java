@@ -15,5 +15,6 @@ public record WidgetResponse(
     int version,
     String embedSnippet,
     OffsetDateTime createdAt,
-    OffsetDateTime updatedAt
+    OffsetDateTime updatedAt,
+    boolean requireProofOfWork
 ) {}

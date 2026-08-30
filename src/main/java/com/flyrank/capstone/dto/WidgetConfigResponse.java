@@ -10,5 +10,6 @@ public record WidgetConfigResponse(
     List<WidgetFieldDto> fields,
     String buttonText,
     Map<String, Object> displayOptions,
-    int version
+    int version,
+    boolean requireProofOfWork
 ) {}

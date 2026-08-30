@@ -39,6 +39,9 @@ public class Widget {
     private String displayOptions;
     @Column(name = "webhook_url", columnDefinition = "text")
     private String webhookUrl;
+    @Column(name = "require_proof_of_work", nullable = false)
+    @Builder.Default
+    private boolean requireProofOfWork = false;
     @Column(nullable = false)
     @Builder.Default
     private Integer version = 1;

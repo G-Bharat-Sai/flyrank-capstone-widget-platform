@@ -27,6 +27,7 @@ public class SubmissionService {
     private final GeoEnrichmentService geoEnrichmentService;
     private final WebhookService webhookService;
     private final SubmissionEventBroadcaster submissionEventBroadcaster;
+    private final PowChallengeService powChallengeService;
     public Optional<SubmissionResponse> submit(SubmissionRequest request, String ipAddress, String idempotencyKey) {
         Widget widget = widgetRepository.findById(request.widgetId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Widget not found"));
@@ -44,6 +45,11 @@ public class SubmissionService {
         if (request.formRenderedAt() != null) {
             long fillTimeMillis = System.currentTimeMillis() - request.formRenderedAt();
             if (fillTimeMillis >= 0 && fillTimeMillis < MIN_FILL_TIME_MILLIS) {
+                return Optional.empty();
+            }
+        }
+        if (widget.isRequireProofOfWork()) {
+            if (!powChallengeService.verifyAndConsume(request.challengeId(), request.challengeNonce())) {
                 return Optional.empty();
             }
         }

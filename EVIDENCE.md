@@ -38,7 +38,7 @@ GET /widgets/{id}/widget.js (unversioned convenience alias, kept for backward co
 Status: 200
 Cache-Control: max-age=86400, public
 The URL genuinely changes when the version changes (`widget.v{version}.js`), and a version that hasn't been published 404s rather than silently serving stale or wrong content.
-The versioned bundle is also minified: the live source was extracted, whitespace-collapsed (5020 -> 2940 bytes), and syntax-validated with `node --check` before being embedded, while the unversioned `widget.js` still serves the original readable source. Proven by the automated test `versionedWidgetScriptIsMinifiedAndSmallerThanTheUnversionedOne` in `WidgetDeliveryIntegrationTest`, which asserts the versioned response is smaller and contains no newlines.
+The versioned bundle is also minified: run through Terser using only its default compact printer (no `-c` compress, no `-m` mangle), stripping whitespace/comments/newlines while leaving the code's structure and identifier names untouched, and syntax-validated with `node --check` before being embedded (5791 -> 3797 bytes for the current, proof-of-work-aware script). Terser's `-c` compress pass was tried first and rejected: it silently inlined the single-call `renderWidget` function into an anonymous IIFE, which is behaviorally identical but erases a readable name a real debugging session would want. The unversioned `widget.js` still serves the original readable source. Proven by the automated test `versionedWidgetScriptIsMinifiedAndSmallerThanTheUnversionedOne` in `WidgetDeliveryIntegrationTest`, which asserts the versioned response is smaller, contains no newlines, and still contains the literal function name `renderWidget`.
 ### The widget renders on a page served from a different origin than your API.
 A plain static HTML page ("Acme Bakery"), served via `python -m http.server 8080`, embeds the widget from the API running on port 3000 -- two genuinely different origins. Screenshot confirms the widget rendered (title "Webhook Test Widget", email field, Submit button) and, after submitting, displayed "Thank you!".
 Submission count for that widget in the database, before and after the browser submission:
@@ -54,6 +54,7 @@ Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS
 POST /submissions (Origin: http://localhost:5500, real cross-origin request)
 Status: 201
 Access-Control-Allow-Origin: http://localhost:5500
+Proven by the automated test `preflightForSubmissionsIsHandledWithCorrectCorsHeaders` in `CorsIntegrationTest`, which asserts the exact preflight status and headers above rather than relying only on manual curl output.
 ### All incoming input validated; malformed and oversized payloads rejected with appropriate 4xx codes and JSON errors.
 Missing required field:
 POST /submissions (widgetId omitted)
@@ -101,7 +102,8 @@ The response looks successful to the bot (so it doesn't learn to avoid the honey
 SELECT count(*) FROM submissions WHERE payload::text LIKE '%spambot@example.com%';
 count
 0
-A second, independent signal was added later: the embedded widget script records when the form actually rendered and reports it back on submit. A submission completed in under 1.5 seconds is treated the same way as a honeypot hit -- silently dropped, never stored. Proven by the automated tests `submissionSubmittedTooQuicklyAfterFormRenderIsSilentlyDropped` (dropped) and `submissionSubmittedAfterAReasonableFillTimeIsStored` (stored normally) in `SubmissionControllerIntegrationTest`, both passing as part of the 32-test `mvn test` run.
+A second, independent signal was added later: the embedded widget script records when the form actually rendered and reports it back on submit. A submission completed in under 1.5 seconds is treated the same way as a honeypot hit -- silently dropped, never stored. Proven by the automated tests `submissionSubmittedTooQuicklyAfterFormRenderIsSilentlyDropped` (dropped) and `submissionSubmittedAfterAReasonableFillTimeIsStored` (stored normally) in `SubmissionControllerIntegrationTest`, both passing as part of the 41-test `mvn test` run.
+A third, opt-in layer (proof-of-work) is documented in its own stretch-goal section below.
 ---
 ## Enrichment & safe side effects
 ### IP->geo enrichment uses a provider fallback chain: provider A down -> provider B answers -> submission enriched.
@@ -111,6 +113,7 @@ ip_address | geo_country | geo_city | geo_provider_used
 8.8.8.8 | United States | Mountain View | ipapi.co
 `geo_provider_used = ipapi.co` (provider B) proves B specifically covered for A's failure -- this can only happen if A was attempted and failed, since A's URL was unreachable by construction.
 Reverted afterward and re-tested with both providers healthy: `geo_provider_used = ip-api` (provider A succeeds on its own), confirming the revert was clean.
+This scenario is also covered by an automated test, `GeoFallbackIntegrationTest`, which spins up a deterministic embedded HTTP stub server in place of provider B and points provider A at an unreachable port, so the fallback proof no longer depends on real external network calls being reachable during CI or grading.
 ### All providers down -> submission still succeeds (without geo). Degrade, never fail.
 Both provider URLs deliberately broken:
 POST /submissions
@@ -138,8 +141,20 @@ Webhook delivery runs as a background job (separate thread `webhook-async-1`) af
 Proven by two automated tests in `DashboardStreamIntegrationTest`:
 - `streamingWithoutAuthIsRejected` -- confirms the stream endpoint is owner-authenticated like the rest of `/dashboard`, not a hole in the auth model.
 - `ownerReceivesLiveEventWhenANewSubmissionArrivesForTheirWidget` -- opens the stream as an authenticated owner, submits a real lead against that owner's widget, and asserts the emitted SSE bytes actually contain the new submission's widget ID, proving the push genuinely happens rather than just that the endpoint returns 200.
-Both pass as part of the 35-test `mvn test` run.
+Both pass as part of the 41-test `mvn test` run.
 One deliberate design choice: the browser's native `EventSource` API cannot send custom headers, and this app's entire auth model is `Authorization: Bearer <jwt>` -- there is no session cookie to fall back on. Rather than weaken auth by passing the token in a query string (which would leak it into server logs and browser history), the dashboard UI (`dashboard-ui/index.html`) opens the stream with `fetch()`, like every other authenticated call it makes, and manually parses the SSE wire format out of the streamed response body. The trade-off is losing `EventSource`'s built-in auto-reconnect, which is why the client implements its own 3-second reconnect loop instead.
+---
+## Stretch goal: proof-of-work bot defense
+### A widget can require a solved SHA-256 proof-of-work challenge before it accepts a submission, opt-in per widget.
+`Widget.requireProofOfWork` (default `false`) turns this on per widget without touching any of the existing submission tests, none of which send challenge data -- a deliberate design choice over a global mandatory gate, which would have broken roughly 30 pre-existing tests across four test classes.
+`GET /submissions/challenge` issues a random seed and a difficulty (currently 4 leading hex zero digits). The widget script solves it client-side with `crypto.subtle.digest('SHA-256', ...)`, brute-forcing nonces until `sha256(seed + nonce)` starts with that many zeros, then attaches `challengeId`/`challengeNonce` to the submission payload. `SubmissionService` verifies and single-use-consumes the challenge (`PowChallengeService.verifyAndConsume`) before validating fields -- a missing, wrong, expired, or already-used challenge causes the submission to be silently dropped: the same "looks successful to the bot, never actually stored" pattern already used for the honeypot.
+Proven by four automated tests in `ProofOfWorkIntegrationTest`:
+- `submissionWithoutSolvingChallengeIsSilentlyDroppedWhenWidgetRequiresProofOfWork` -- a submission with no challenge data against a PoW-enabled widget gets the same `201` a bot would see, but 0 rows are ever stored for that widget: a complete block.
+- `submissionWithACorrectlySolvedChallengeIsStored` -- a real client-side solve (SHA-256, difficulty 4, brute-forced in Java the same way the browser does it in JS) took 198ms in this test run, and the submission carrying that solution is then accepted and stored normally.
+- `aSolvedChallengeCannotBeReplayedForASecondSubmission` -- the same solved challenge is submitted twice; only the first attempt is stored, proving single-use/consume-on-verify.
+- `widgetsWithoutProofOfWorkRequiredDoNotNeedAChallenge` -- a widget with the flag left off (the default) accepts a plain submission with no challenge at all, confirming full backward compatibility with every widget created before this feature existed.
+All four pass as part of the 41-test `mvn test` run.
+One trade-off worth being explicit about: `GET /submissions/challenge` shares the same per-IP rate-limit bucket as `POST /submissions` (both match the `/submissions/**` path the rate limiter guards), rather than getting a bucket of its own. A visitor submitting to a PoW-enabled widget spends two rate-limit tokens per real submission -- one to fetch the challenge, one to submit -- instead of one, roughly halving the effective throughput ceiling for PoW-enabled widgets under the existing limit. That's an accepted cost: proof-of-work is opt-in, and a widget owner turning it on is already choosing to slow submissions down in exchange for spam resistance.
 ---
 ## Documentation
 ### README with architecture diagram, setup instructions, and API documentation; the required files from Section 11 present.
@@ -149,7 +164,7 @@ See README.md, capstone.yaml, BUILDLOG.md, and .env.example in the repository ro
 - **Layered architecture** -- controller / service / repository separation throughout (see `controller/`, `service/`, `repository/` packages).
 - **Validation at the boundary** -- see the malformed/oversized payload evidence above; every input path validated before touching business logic, no 500s on bad input.
 - **>=1 background job, retries + failure alert** -- webhook delivery, see evidence above (`@Async`, 3 retries with backoff, `ERROR ... ALERT` on exhaustion).
-- **Real persistence** -- PostgreSQL via Flyway migrations (`V1`-`V3`), indexed foreign keys, tenant-scoped queries throughout.
+- **Real persistence** -- PostgreSQL via Flyway migrations (`V1`-`V4`), indexed foreign keys, tenant-scoped queries throughout.
 - **Idempotency where it matters** -- submission endpoint accepts an `Idempotency-Key` header; a repeated key returns the original submission instead of creating a duplicate:
 Request 1 (key=test-idem-key-001) -> id: 34f7e620-1a4a-4e7e-b9c2-7c32cd46257b
 Request 2 (same key) -> id: 34f7e620-1a4a-4e7e-b9c2-7c32cd46257b (identical)
