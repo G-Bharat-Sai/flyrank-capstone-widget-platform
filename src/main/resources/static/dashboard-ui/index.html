@@ -19,66 +19,65 @@
     .error { color: #c0392b; font-size: 13px; }
     #logoutBtn { background: #999; margin-bottom: 20px; }
     code { background: #f1f1f1; padding: 2px 6px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+    #liveStatus { font-weight: normal; }
+    #liveFeed li { padding: 6px 0; border-bottom: 1px solid #eee; }
+    #liveFeed li:last-child { border-bottom: none; }
 </style>
 </head>
 <body>
-
 <div id="loginView" class="card">
-    <h1>FlyRank Capstone ? Owner Login</h1>
+    <h1>FlyRank Capstone - Owner Login</h1>
     <input type="email" id="loginEmail" placeholder="Email">
     <input type="password" id="loginPassword" placeholder="Password">
     <button onclick="doLogin()">Log in</button>
     <p class="error" id="loginError"></p>
 </div>
-
 <div id="dashboardView" style="display:none;">
     <button id="logoutBtn" onclick="doLogout()">Log out</button>
     <h1>Dashboard</h1>
-
     <div class="card summary">
         <div class="stat"><div class="value" id="statWidgets">-</div><div class="label">Widgets</div></div>
         <div class="stat"><div class="value" id="statTotal">-</div><div class="label">Total Submissions</div></div>
         <div class="stat"><div class="value" id="stat7">-</div><div class="label">Last 7 Days</div></div>
         <div class="stat"><div class="value" id="stat30">-</div><div class="label">Last 30 Days</div></div>
     </div>
-
+    <div class="card">
+        <h2>Live activity <span id="liveStatus">Connecting...</span></h2>
+        <ul id="liveFeed" style="list-style:none; padding:0; margin:0; font-size:14px;"></ul>
+    </div>
     <div class="card">
         <h2>Submissions per widget</h2>
         <table id="widgetTable"><thead><tr><th>Widget</th><th>Submissions</th></tr></thead><tbody></tbody></table>
     </div>
-
     <div class="card">
         <h2>Top countries</h2>
         <table id="countryTable"><thead><tr><th>Country</th><th>Submissions</th></tr></thead><tbody></tbody></table>
     </div>
-
     <div class="card">
         <h2>Submissions per day (last 30 days)</h2>
         <table id="dailyTable"><thead><tr><th>Date</th><th>Submissions</th></tr></thead><tbody></tbody></table>
     </div>
-
     <div class="card">
         <h2>Your widgets</h2>
         <div id="widgetList"></div>
     </div>
 </div>
-
 <script>
 const API = window.location.origin;
 let token = localStorage.getItem('flyrank_token');
-
+let liveController = null;
 function showView() {
     if (token) {
         document.getElementById('loginView').style.display = 'none';
         document.getElementById('dashboardView').style.display = 'block';
         loadDashboard();
         loadWidgets();
+        connectLiveStream();
     } else {
         document.getElementById('loginView').style.display = 'block';
         document.getElementById('dashboardView').style.display = 'none';
     }
 }
-
 async function doLogin() {
     const email = document.getElementById('loginEmail').value;
     const password = document.getElementById('loginPassword').value;
@@ -101,13 +100,15 @@ async function doLogin() {
         document.getElementById('loginError').textContent = 'Network error. Is the server running?';
     }
 }
-
 function doLogout() {
+    if (liveController) {
+        liveController.abort();
+        liveController = null;
+    }
     token = null;
     localStorage.removeItem('flyrank_token');
     showView();
 }
-
 async function authedFetch(path) {
     const res = await fetch(API + path, { headers: { Authorization: 'Bearer ' + token } });
     if (res.status === 401 || res.status === 403) {
@@ -116,31 +117,25 @@ async function authedFetch(path) {
     }
     return res.json();
 }
-
 async function loadDashboard() {
     const data = await authedFetch('/dashboard');
-
     document.getElementById('statWidgets').textContent = data.totalWidgets;
     document.getElementById('statTotal').textContent = data.totalSubmissions;
     document.getElementById('stat7').textContent = data.submissionsLast7Days;
     document.getElementById('stat30').textContent = data.submissionsLast30Days;
-
     const widgetBody = document.querySelector('#widgetTable tbody');
     widgetBody.innerHTML = data.perWidget.map(w =>
         `<tr><td>${escapeHtml(w.title)}</td><td>${w.submissionCount}</td></tr>`
     ).join('') || '<tr><td colspan="2">No widgets yet</td></tr>';
-
     const countryBody = document.querySelector('#countryTable tbody');
     countryBody.innerHTML = data.byCountry.map(c =>
         `<tr><td>${escapeHtml(c.country)}</td><td>${c.count}</td></tr>`
     ).join('') || '<tr><td colspan="2">No geo data yet</td></tr>';
-
     const dailyBody = document.querySelector('#dailyTable tbody');
     dailyBody.innerHTML = data.dailyCounts.map(d =>
         `<tr><td>${d.date}</td><td>${d.count}</td></tr>`
     ).join('') || '<tr><td colspan="2">No submissions in the last 30 days</td></tr>';
 }
-
 async function loadWidgets() {
     const widgets = await authedFetch('/widgets');
     const container = document.getElementById('widgetList');
@@ -155,14 +150,94 @@ async function loadWidgets() {
         </div>
     `).join('');
 }
-
+async function connectLiveStream() {
+    if (liveController) {
+        liveController.abort();
+    }
+    liveController = new AbortController();
+    const thisController = liveController;
+    try {
+        const res = await fetch(API + '/dashboard/stream', {
+            headers: { Authorization: 'Bearer ' + token },
+            signal: thisController.signal
+        });
+        if (!res.ok || !res.body) {
+            scheduleReconnect(thisController);
+            return;
+        }
+        setLiveStatus(true);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split('\n\n');
+            buffer = events.pop();
+            for (const raw of events) {
+                handleSseEvent(raw);
+            }
+        }
+        setLiveStatus(false);
+        scheduleReconnect(thisController);
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            setLiveStatus(false);
+            scheduleReconnect(thisController);
+        }
+    }
+}
+function scheduleReconnect(controller) {
+    setTimeout(() => {
+        if (token && controller === liveController) {
+            connectLiveStream();
+        }
+    }, 3000);
+}
+function handleSseEvent(raw) {
+    let eventName = 'message';
+    const dataLines = [];
+    for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) {
+            eventName = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+        }
+    }
+    const dataStr = dataLines.join('\n');
+    if (eventName === 'submission' && dataStr) {
+        try {
+            const submission = JSON.parse(dataStr);
+            addLiveActivity(submission);
+            loadDashboard();
+        } catch (e) {
+            console.error('Failed to parse live submission event', e);
+        }
+    }
+}
+function setLiveStatus(connected) {
+    const el = document.getElementById('liveStatus');
+    if (!el) return;
+    el.textContent = connected ? 'Live' : 'Reconnecting...';
+    el.style.color = connected ? '#2e7d32' : '#c0392b';
+}
+function addLiveActivity(submission) {
+    const list = document.getElementById('liveFeed');
+    if (!list) return;
+    const item = document.createElement('li');
+    const time = new Date(submission.createdAt).toLocaleTimeString();
+    item.textContent = time + ' - New submission on "' + submission.widgetTitle + '"';
+    list.prepend(item);
+    while (list.children.length > 10) {
+        list.removeChild(list.lastChild);
+    }
+}
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
 showView();
 </script>
-
 </body>
 </html>

@@ -1,6 +1,6 @@
-# FlyRank Capstone - Embeddable Widget & Lead-Capture Platform
+# Embeddable Widget & Lead-Capture Platform
 
-This is my backend capstone for the FlyRank internship track. It's a small SaaS-style platform: a business signs up, builds a "widget" (a signup form, contact form, or popover) through a dashboard, and gets a two-line embed snippet to paste into their own website. Visitors to that website fill out the embedded form, and the submission gets captured, enriched, and stored - visible back in the business owner's dashboard.
+This is my backend capstone project, built during a backend internship track. It's a small SaaS-style platform: a business signs up, builds a "widget" (a signup form, contact form, or popover) through a dashboard, and gets a two-line embed snippet to paste into their own website. Visitors to that website fill out the embedded form, and the submission gets captured, enriched, and stored - visible back in the business owner's dashboard.
 
 Think of it as a tiny, self-hosted version of something like a Mailchimp popup form or Typeform embed, built from scratch to show real backend engineering: auth, multi-tenant data isolation, rate limiting, external API integration with graceful degradation, a safe async-style side effect, cached public delivery, and an aggregation-heavy dashboard API - all backed by hand-written SQL rather than an ORM hiding what's actually happening.
 
@@ -24,10 +24,10 @@ SubmissionService
   2. save submission to PostgreSQL (sync)
   3. geo-enrich: provider A -> provider B -> null (best effort)
   4. webhook notify: @Async, retries with backoff, ERROR alert on failure
+  5. push a live event to the owner's open dashboard stream, if any
         |
         v
 PostgreSQL (owners, widgets, submissions)
-
 
 Business owner's browser
         |
@@ -35,6 +35,7 @@ Business owner's browser
 JWT-authenticated JSON API
   POST/GET/PUT/DELETE /widgets
   GET /dashboard  (aggregate stats via native SQL)
+  GET /dashboard/stream  (live submission feed, Server-Sent Events)
         |
         v
 PostgreSQL (same database, owner-scoped rows only)
@@ -49,6 +50,7 @@ Everything a visitor triggers (`POST /submissions`) is public and unauthenticate
 - **Spring Security + JWT** (HMAC-SHA256) for stateless auth
 - **Bucket4j** for per-IP rate limiting
 - Plain **java.net.http.HttpClient** for outbound calls to the geo-lookup providers and webhook deliveries (deliberately not a Spring abstraction, to sidestep framework version churn)
+- Server-Sent Events for the live dashboard feed (`GET /dashboard/stream`) - a per-owner in-memory map of open `SseEmitter`s in `SubmissionEventBroadcaster`, pushed to the instant a submission is actually persisted (never for honeypot or fill-time-heuristic drops). No WebSockets dependency needed for a one-directional server-to-client feed; the browser client uses `fetch()` with a manually parsed SSE stream instead of the native `EventSource` API, because `EventSource` can't send the `Authorization: Bearer` header this app's whole auth model depends on.
 - A single static HTML/vanilla-JS dashboard page - no frontend framework, no build step
 - Native SQL for every aggregate query in the dashboard (`GROUP BY`, date truncation) rather than pulling rows into Java and counting in memory
 
@@ -57,11 +59,11 @@ Everything a visitor triggers (`POST /submissions`) is public and unauthenticate
 1. Sign up and log in (`/auth/signup`, `/auth/login`) - passwords hashed with BCrypt, sessions are stateless JWTs.
 2. Create a widget (`POST /widgets`) with a custom set of fields (name, email, whatever), a button label, and optionally a webhook URL to get notified of new submissions.
 3. Copy the embed snippet from the widget's response and paste it into any website. That's a `<script>` tag pointing at `/widgets/{id}/widget.v{version}.js`.
-4. Watch submissions roll in on the dashboard (`/dashboard-ui/index.html`) - total counts, per-widget breakdown, geo distribution by country, and a daily submission count, all pulled from one `GET /dashboard` call.
+4. Watch submissions roll in live on the dashboard (`/dashboard-ui/index.html`) - total counts, per-widget breakdown, geo distribution by country, and a daily submission count from `GET /dashboard`, plus a live activity feed pushed over Server-Sent Events the instant a new submission is stored, with automatic reconnect if the connection drops.
 
 ## What a visitor sees
 
-Nothing related to FlyRank at all - just a small form rendered inline on the business's own page. The embed script is a single generic script shared by every widget; it fetches that widget's specific field configuration from `/widgets/{id}/config`, builds the form dynamically, and posts the result to `/submissions`. A hidden honeypot field silently drops obvious bot submissions without giving the bot any feedback that it failed.
+Nothing branded or platform-specific at all - just a small form rendered inline on the business's own page. The embed script is a single generic script shared by every widget; it fetches that widget's specific field configuration from `/widgets/{id}/config`, builds the form dynamically, and posts the result to `/submissions`. A hidden honeypot field silently drops obvious bot submissions without giving the bot any feedback that it failed.
 
 ## Running it locally
 
@@ -103,6 +105,7 @@ It prints the demo owner's email/password, the widget ID, and a ready-to-run `cu
 | GET | `/widgets/{id}/widget.v{version}.js` | none | Public, cached, versioned embeddable script (404 on unknown version) |
 | POST | `/submissions` | none | Public submission endpoint (rate-limited, honeypot-protected, supports `Idempotency-Key` header) |
 | GET | `/dashboard` | JWT | Aggregate stats for the current owner |
+| GET | `/dashboard/stream` | JWT | Live submission feed for the current owner (Server-Sent Events) |
 
 ## A few things worth knowing
 
@@ -116,9 +119,9 @@ It prints the demo owner's email/password, the widget ID, and a ready-to-run `cu
 
 Being upfront about what this project doesn't do, since the brief grades honesty over polish:
 
-- Automated coverage is solid but not total: 32 MockMvc integration tests (`mvn test`) run against a real Postgres instance and cover auth, widget CRUD and tenant isolation, widget delivery and caching, submission validation, idempotency, the honeypot and fill-time heuristic, and rate limiting. The provider-A-down geo fallback and the full webhook retry-with-alert timing proof are still verified manually only (see `EVIDENCE.md`), since automating those cleanly would mean stubbing external HTTP calls.
+- Automated coverage is solid but not total: 35 MockMvc integration tests (`mvn test`) run against a real Postgres instance and cover auth, widget CRUD and tenant isolation, widget delivery and caching, submission validation, idempotency, the honeypot and fill-time heuristic, rate limiting, and the live dashboard stream. The provider-A-down geo fallback and the full webhook retry-with-alert timing proof are still verified manually only (see `EVIDENCE.md`), since automating those cleanly would mean stubbing external HTTP calls.
 - The versioned bundle (`widget.v{version}.js`) is served minified: a safe, mechanical whitespace-collapse pass (5020 -> 2940 bytes for the current script), syntax-checked with `node --check` before being embedded. It's not a full minifier like Terser -- string-literal-aware tricks like stripping whitespace next to punctuation were deliberately skipped after confirming by hand that a naive version would corrupt a string literal (turning `'Network error, please try again.'` into `'Network error,please try again.'`) -- so compression is modest but guaranteed not to alter behavior or text. The unversioned `widget.js` still serves the original readable source for backward compatibility and debugging. There's still no CDN or build pipeline; both versions are static content embedded directly in the application.
-- The dashboard is a static page that polls `GET /dashboard` on load - there's no real-time/websocket push when a new submission comes in.
+- The dashboard's live feed (`GET /dashboard/stream`, Server-Sent Events) pushes new submissions the instant they're stored, scoped per owner via an in-memory emitter map -- but it's in-memory only, so it doesn't survive an app restart or work across multiple app instances (no message broker or pub/sub), and each open dashboard tab holds its own independent connection with a simple fixed 3-second reconnect on drop rather than true exponential backoff.
 - Rate limiting is per-IP only (Bucket4j, in-memory), so it resets if the app restarts and won't help against a distributed botnet - it's meant to stop naive abuse, not a determined attacker.
 - Spam protection combines a honeypot field with a client-reported fill-time heuristic (a submission completed in under 1.5 seconds is silently dropped, same as the honeypot). There's still no CAPTCHA, no bot-fingerprinting, and no ML-based filtering, and the fill-time check trusts a client-supplied timestamp, so it deters naive bots rather than a determined one.
 - Geo enrichment is best-effort: if both providers are down, the submission is still saved with the country left null, exactly as the brief expects, but there's no retry queue for enrichment specifically (only webhook delivery gets retried).

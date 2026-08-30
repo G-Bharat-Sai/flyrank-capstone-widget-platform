@@ -26,6 +26,7 @@ public class SubmissionService {
     private final ObjectMapper objectMapper;
     private final GeoEnrichmentService geoEnrichmentService;
     private final WebhookService webhookService;
+    private final SubmissionEventBroadcaster submissionEventBroadcaster;
     public Optional<SubmissionResponse> submit(SubmissionRequest request, String ipAddress, String idempotencyKey) {
         Widget widget = widgetRepository.findById(request.widgetId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Widget not found"));
@@ -74,7 +75,9 @@ public class SubmissionService {
             return Optional.of(new SubmissionResponse(winner.getId(), winner.getWidgetId(), winner.getCreatedAt()));
         }
         webhookService.notify(widget, submission, request.fields());
-        return Optional.of(new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt()));
+        SubmissionResponse response = new SubmissionResponse(submission.getId(), submission.getWidgetId(), submission.getCreatedAt());
+        submissionEventBroadcaster.publishNewSubmission(widget.getOwnerId(), response, widget.getTitle());
+        return Optional.of(response);
     }
     @SuppressWarnings("unchecked")
     private void validateFieldsAgainstWidgetSchema(Widget widget, Map<String, Object> submittedFields) {
